@@ -11,6 +11,17 @@ function readEnv(name) {
   return value;
 }
 
+function parseBool(value) {
+  if (typeof value !== 'string') return false;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+function parseSubreddits(value, fallback) {
+  if (typeof value !== 'string') return fallback;
+  const list = value.split(',').map((name) => name.trim()).filter(Boolean);
+  return list.length > 0 ? list : fallback;
+}
+
 function createClient() {
   return new Snoowrap({
     userAgent: readEnv('REDDIT_USER_AGENT'),
@@ -23,7 +34,10 @@ function createClient() {
 
 async function main() {
   const client = createClient();
-  const { results, errors } = await runStreak({ client, subreddits: SUBREDDITS });
+  const dryRun = parseBool(process.env.DRY_RUN);
+  const subreddits = parseSubreddits(process.env.SUBREDDITS, SUBREDDITS);
+  console.log(`Running on subreddits: ${subreddits.join(', ')}${dryRun ? ' (dry run)' : ''}`);
+  const { results, errors } = await runStreak({ client, subreddits, dryRun });
   console.log('Summary:', JSON.stringify(results, null, 2));
   if (errors.length > 0) {
     process.exitCode = 1;
@@ -37,4 +51,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, createClient, SUBREDDITS };
+module.exports = { main, createClient, SUBREDDITS, parseBool, parseSubreddits };

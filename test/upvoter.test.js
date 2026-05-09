@@ -139,3 +139,68 @@ test('runStreak continues to next subreddit after one fails', async () => {
   assert.equal(results[1].status, 'upvoted');
   assert.equal(okPost.upvoted, true);
 });
+
+test('dryRun reports the post that would be upvoted without calling upvote', async () => {
+  let upvoteCalls = 0;
+  const post = makePost({
+    id: 'a',
+    upvoteImpl: async function () {
+      upvoteCalls += 1;
+      this.upvoted = true;
+    }
+  });
+  const client = makeClient({ test: [post] });
+  const result = await upvoteLatestInSubreddit({
+    client,
+    subreddit: 'test',
+    logger: silentLogger(),
+    dryRun: true
+  });
+  assert.equal(result.status, 'dry-run');
+  assert.equal(result.postId, 'a');
+  assert.equal(post.upvoted, false);
+  assert.equal(upvoteCalls, 0);
+});
+
+test('dryRun still skips already-upvoted posts before reporting the next candidate', async () => {
+  let upvoteCalls = 0;
+  const trackedUpvote = async function () {
+    upvoteCalls += 1;
+  };
+  const posts = [
+    makePost({ id: 'a', likes: true, upvoteImpl: trackedUpvote }),
+    makePost({ id: 'b', likes: null, upvoteImpl: trackedUpvote })
+  ];
+  const client = makeClient({ test: posts });
+  const result = await upvoteLatestInSubreddit({
+    client,
+    subreddit: 'test',
+    logger: silentLogger(),
+    dryRun: true
+  });
+  assert.equal(result.status, 'dry-run');
+  assert.equal(result.postId, 'b');
+  assert.equal(upvoteCalls, 0);
+});
+
+test('runStreak forwards dryRun to per-subreddit upvotes', async () => {
+  let upvoteCalls = 0;
+  const trackedUpvote = async function () {
+    upvoteCalls += 1;
+  };
+  const client = makeClient({
+    a: [makePost({ id: '1', upvoteImpl: trackedUpvote })],
+    b: [makePost({ id: '2', upvoteImpl: trackedUpvote })]
+  });
+  const { results, errors } = await runStreak({
+    client,
+    subreddits: ['a', 'b'],
+    logger: silentLogger(),
+    dryRun: true
+  });
+  assert.equal(errors.length, 0);
+  assert.equal(results.length, 2);
+  assert.equal(results[0].status, 'dry-run');
+  assert.equal(results[1].status, 'dry-run');
+  assert.equal(upvoteCalls, 0);
+});
