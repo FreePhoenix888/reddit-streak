@@ -1,0 +1,24 @@
+{
+  "name": "reddit-streak",
+  "version": "1.0.0",
+  "description": "Daily Reddit upvote streak via GitHub Actions",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/"
+  },
+  "keywords": [
+    "reddit",
+    "streak",
+    "snoowrap",
+    "github-actions"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "snoowrap": "^1.23.0"
+  }
+}
