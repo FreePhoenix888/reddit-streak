@@ -1,8 +1,8 @@
 const DEFAULT_LOOKAHEAD = 10;
 
-async function upvoteLatestInSubreddit({ client, subreddit, logger = console, lookahead = DEFAULT_LOOKAHEAD }) {
+async function upvoteLatestInSubreddit({ client, subreddit, logger = console, lookahead = DEFAULT_LOOKAHEAD, dryRun = false }) {
   const limit = Math.max(1, lookahead);
-  logger.log(`[${subreddit}] fetching ${limit} newest posts`);
+  logger.log(`[${subreddit}] fetching ${limit} newest posts${dryRun ? ' (dry run)' : ''}`);
   const listing = await client.getSubreddit(subreddit).getNew({ limit });
   const posts = Array.from(listing || []);
 
@@ -18,6 +18,10 @@ async function upvoteLatestInSubreddit({ client, subreddit, logger = console, lo
       logger.log(`[${subreddit}] post ${id} "${title}" already upvoted, trying next`);
       continue;
     }
+    if (dryRun) {
+      logger.log(`[${subreddit}] would upvote post ${id} "${title}" (dry run)`);
+      return { subreddit, status: 'dry-run', postId: id, title };
+    }
     try {
       await post.upvote();
       logger.log(`[${subreddit}] upvoted post ${id} "${title}"`);
@@ -32,12 +36,12 @@ async function upvoteLatestInSubreddit({ client, subreddit, logger = console, lo
   return { subreddit, status: 'all-upvoted', checked: posts.length };
 }
 
-async function runStreak({ client, subreddits, logger = console, lookahead = DEFAULT_LOOKAHEAD }) {
+async function runStreak({ client, subreddits, logger = console, lookahead = DEFAULT_LOOKAHEAD, dryRun = false }) {
   const results = [];
   const errors = [];
   for (const subreddit of subreddits) {
     try {
-      const result = await upvoteLatestInSubreddit({ client, subreddit, logger, lookahead });
+      const result = await upvoteLatestInSubreddit({ client, subreddit, logger, lookahead, dryRun });
       results.push(result);
     } catch (error) {
       logger.error(`[${subreddit}] error: ${error.message}`);

@@ -66,4 +66,21 @@ Tests use the built-in Node.js test runner with mocked Reddit clients — no net
 
 ## Manual trigger
 
-The workflow also supports `workflow_dispatch`, so it can be run on demand from the **Actions** tab.
+The workflow supports `workflow_dispatch`, so you can run it on demand from the **Actions** tab without waiting for the daily 09:00 UTC schedule:
+
+1. Open the repository on GitHub.
+2. Go to **Actions → Reddit Streak**.
+3. Click **Run workflow**, choose the branch, optionally fill in the inputs below, and confirm.
+
+### Manual run inputs
+
+| Input | Type | Default | Description |
+| --- | --- | --- | --- |
+| `dry_run` | boolean | `false` | When enabled, fetches the newest posts and logs which post would be upvoted, without calling the Reddit upvote API. Useful for testing credentials and code without affecting your account history. |
+| `subreddits` | string | _empty_ | Comma-separated list of subreddits to target during this manual run (e.g. `VintageStory,DispatchAdHoc`). When left empty, the defaults baked into `src/index.js` are used. |
+
+The same inputs are exposed as the `DRY_RUN` and `SUBREDDITS` environment variables, so you can also run a dry run locally:
+
+```bash
+DRY_RUN=true SUBREDDITS=VintageStory npm start
+```

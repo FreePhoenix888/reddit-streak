@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: '0 9 * * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Fetch posts and log what would be upvoted, without actually upvoting'
+        type: boolean
+        default: false
+      subreddits:
+        description: 'Comma-separated subreddits to target (leave empty to use the defaults)'
+        type: string
+        default: ''
 
 jobs:
   upvote:
@@ -29,4 +38,6 @@ jobs:
           REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
           REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
           REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          SUBREDDITS: ${{ inputs.subreddits }}
         run: npm start
