@@ -1,43 +1,58 @@
 # reddit-streak
 
-Daily Reddit upvote streak via GitHub Actions and the official Reddit API (`snoowrap`).
+Daily Reddit upvote streak via GitHub Actions and a real browser. Reddit's HTTP API is **not** used — every action goes through a Chromium browser controlled by [Playwright](https://playwright.dev/) wrapped in [browser-commander](https://github.com/link-foundation/browser-commander).
 
 ## What it does
 
 Every day at **09:00 UTC**, the workflow runs a Node.js script that:
 
-1. Authenticates against the Reddit API using OAuth (script-type app).
-2. Visits each configured subreddit:
-   - [r/VintageStory](https://www.reddit.com/r/VintageStory/)
-   - [r/DispatchAdHoc](https://www.reddit.com/r/DispatchAdHoc/)
-3. Loads the 10 newest posts.
-4. Upvotes the first post that is not already upvoted by the authenticated user.
+1. Launches a headless Chromium browser via `browser-commander`.
+2. Restores the Reddit session from cookies stored as a GitHub secret.
+3. Visits each configured subreddit's `/new/` page:
+   - [r/VintageStory](https://www.reddit.com/r/VintageStory/new/)
+   - [r/DispatchAdHoc](https://www.reddit.com/r/DispatchAdHoc/new/)
+4. Locates the latest post and clicks the upvote button if it is not already pressed.
 5. Logs every action and reports a per-subreddit summary.
 
 ## Required GitHub Secrets
 
-Configure these under `Settings → Secrets and variables → Actions`:
+Configure under `Settings → Secrets and variables → Actions`:
 
 | Secret | Description |
 | --- | --- |
-| `REDDIT_CLIENT_ID` | Reddit script app client ID |
-| `REDDIT_CLIENT_SECRET` | Reddit script app client secret |
-| `REDDIT_USERNAME` | Reddit account username |
-| `REDDIT_PASSWORD` | Reddit account password |
-| `REDDIT_USER_AGENT` | Custom user agent string, e.g. `reddit-streak/1.0 by u/yourname` |
+| `REDDIT_COOKIES` | JSON array of Reddit cookies that authenticates your account (see below). |
 
-To create a Reddit script app, visit https://www.reddit.com/prefs/apps and select **create another app...** → **script**.
+### Capturing `REDDIT_COOKIES`
+
+1. Sign in to Reddit in your normal browser.
+2. Open DevTools → **Application → Cookies → `https://www.reddit.com`**.
+3. Export the cookies for `reddit.com` (any browser extension that exports cookies as JSON works, e.g. EditThisCookie). At minimum, `reddit_session` and `token_v2` are required; exporting all `.reddit.com` cookies is safest.
+4. Paste the resulting JSON into the `REDDIT_COOKIES` secret. The expected shape is an array of objects:
+
+   ```json
+   [
+     { "name": "reddit_session", "value": "...", "domain": ".reddit.com", "path": "/", "secure": true, "sameSite": "None" },
+     { "name": "token_v2",        "value": "...", "domain": ".reddit.com", "path": "/", "secure": true, "sameSite": "None" }
+   ]
+   ```
+
+   A header-style string (`reddit_session=...; token_v2=...`) is also accepted and gets the defaults filled in.
+
+> Do **not** put your Reddit password into the workflow. Reddit aggressively blocks programmatic logins from new IPs (captcha/2FA), so cookie-based session reuse is the only reliable path.
 
 ## Running locally
 
 ```bash
 npm install
-export REDDIT_CLIENT_ID=...
-export REDDIT_CLIENT_SECRET=...
-export REDDIT_USERNAME=...
-export REDDIT_PASSWORD=...
-export REDDIT_USER_AGENT="reddit-streak/1.0 by u/yourname"
+npx playwright install chromium
+export REDDIT_COOKIES='[{"name":"reddit_session","value":"..."}, ...]'
 npm start
+```
+
+To watch the browser do its thing locally, run with `HEADED=true`:
+
+```bash
+HEADED=true npm start
 ```
 
 ## Running tests
@@ -46,7 +61,7 @@ npm start
 npm test
 ```
 
-Tests use the built-in Node.js test runner with mocked Reddit clients — no network access required.
+Tests use the built-in Node.js test runner with mocked Playwright pages — no browser or network access required.
 
 ## Project layout
 
@@ -56,10 +71,11 @@ Tests use the built-in Node.js test runner with mocked Reddit clients — no net
 │   ├── ci.yml              # runs tests on push / pull request
 │   └── reddit-streak.yml   # daily cron job at 09:00 UTC
 ├── src/
-│   ├── index.js            # entry point: builds snoowrap client, runs the streak
-│   └── upvoter.js          # core logic (testable, no network deps)
+│   ├── index.js            # entry point: launches the browser, restores cookies, runs the streak
+│   └── upvoter.js          # core logic (testable, no real browser deps)
 ├── test/
-│   └── upvoter.test.js     # unit tests with mocked Reddit client
+│   ├── index.test.js       # tests for env parsing and cookie parsing
+│   └── upvoter.test.js     # unit tests with a mocked page
 ├── package.json
 └── README.md
 ```
@@ -76,7 +92,7 @@ The workflow supports `workflow_dispatch`, so you can run it on demand from the 
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `dry_run` | boolean | `false` | When enabled, fetches the newest posts and logs which post would be upvoted, without calling the Reddit upvote API. Useful for testing credentials and code without affecting your account history. |
+| `dry_run` | boolean | `false` | When enabled, navigates and locates the post that *would* be upvoted, without actually clicking the upvote button. Useful for testing the session cookie and selectors without affecting your account history. |
 | `subreddits` | string | _empty_ | Comma-separated list of subreddits to target during this manual run (e.g. `VintageStory,DispatchAdHoc`). When left empty, the defaults baked into `src/index.js` are used. |
 
 The same inputs are exposed as the `DRY_RUN` and `SUBREDDITS` environment variables, so you can also run a dry run locally:
