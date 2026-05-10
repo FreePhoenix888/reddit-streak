@@ -5,6 +5,7 @@ import {
   parseSubreddits,
   parseCookies,
   normalizeSameSite,
+  serializeCookies,
   SUBREDDITS,
 } from '../src/index.js';
 
@@ -83,4 +84,58 @@ test('parseCookies coerces sameSite values', () => {
   assert.equal(normalizeSameSite('lax'), 'Lax');
   assert.equal(normalizeSameSite(undefined), 'Lax');
   assert.equal(normalizeSameSite(null), 'Lax');
+});
+
+test('serializeCookies emits a JSON array of normalized cookie objects', () => {
+  const json = serializeCookies([
+    {
+      name: 'reddit_session',
+      value: 'abc',
+      domain: '.reddit.com',
+      path: '/',
+      secure: true,
+      httpOnly: true,
+      sameSite: 'None',
+      expires: 1234567890,
+    },
+    {
+      name: 'token_v2',
+      value: 'xyz',
+      domain: '.reddit.com',
+      path: '/',
+    },
+  ]);
+  const parsed = JSON.parse(json);
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[0].name, 'reddit_session');
+  assert.equal(parsed[0].sameSite, 'None');
+  assert.equal(parsed[0].expires, 1234567890);
+  assert.equal(parsed[0].httpOnly, true);
+  assert.equal(parsed[1].name, 'token_v2');
+  assert.equal(parsed[1].sameSite, 'Lax');
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed[1], 'expires'), false);
+});
+
+test('serializeCookies output round-trips through parseCookies', () => {
+  const original = [
+    { name: 'reddit_session', value: 'abc', domain: '.reddit.com', path: '/', sameSite: 'None' },
+    { name: 'token_v2', value: 'xyz', domain: '.reddit.com', path: '/', sameSite: 'Lax' },
+  ];
+  const json = serializeCookies(original);
+  const parsed = parseCookies(json);
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[0].name, 'reddit_session');
+  assert.equal(parsed[1].name, 'token_v2');
+});
+
+test('serializeCookies omits expires when missing or non-positive', () => {
+  const json = serializeCookies([
+    { name: 'a', value: '1' },
+    { name: 'b', value: '2', expires: -1 },
+    { name: 'c', value: '3', expires: 0 },
+  ]);
+  const parsed = JSON.parse(json);
+  for (const entry of parsed) {
+    assert.equal(Object.prototype.hasOwnProperty.call(entry, 'expires'), false);
+  }
 });

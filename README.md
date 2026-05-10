@@ -13,18 +13,20 @@ Every day at **09:00 UTC**, the workflow runs a Node.js script that:
    - [r/DispatchAdHoc](https://www.reddit.com/r/DispatchAdHoc/new/)
 4. Locates the latest post and clicks the upvote button if it is not already pressed.
 5. Logs every action and reports a per-subreddit summary.
+6. Optionally writes the (rolled) Reddit cookies back to the `REDDIT_COOKIES` secret so the session stays alive without manual re-capture — see [Auto-refreshing the cookie secret](#auto-refreshing-the-cookie-secret).
 
 ## Required GitHub Secrets
 
 Configure under `Settings → Secrets and variables → Actions`:
 
-| Secret | Description |
-| --- | --- |
-| `REDDIT_COOKIES` | JSON array of Reddit cookies that authenticates your account (see below). |
+| Secret | Required | Description |
+| --- | --- | --- |
+| `REDDIT_COOKIES` | yes | JSON array of Reddit cookies that authenticates your account (see below). |
+| `REDDIT_COOKIES_REFRESH_TOKEN` | optional | GitHub Personal Access Token with `secrets: write` permission. When set, the workflow rewrites `REDDIT_COOKIES` after every successful run, turning this into a true set-and-forget setup. See [Auto-refreshing the cookie secret](#auto-refreshing-the-cookie-secret). |
 
 ### Capturing `REDDIT_COOKIES`
 
-1. Sign in to Reddit in your normal browser.
+1. Sign in to Reddit in your normal browser. Tick **"Stay logged in"** (this gives you the longest-lived `reddit_session`).
 2. Open DevTools → **Application → Cookies → `https://www.reddit.com`**.
 3. Export the cookies for `reddit.com` (any browser extension that exports cookies as JSON works, e.g. EditThisCookie). At minimum, `reddit_session` and `token_v2` are required; exporting all `.reddit.com` cookies is safest.
 4. Paste the resulting JSON into the `REDDIT_COOKIES` secret. The expected shape is an array of objects:
@@ -39,6 +41,25 @@ Configure under `Settings → Secrets and variables → Actions`:
    A header-style string (`reddit_session=...; token_v2=...`) is also accepted and gets the defaults filled in.
 
 > Do **not** put your Reddit password into the workflow. Reddit aggressively blocks programmatic logins from new IPs (captcha/2FA), so cookie-based session reuse is the only reliable path.
+
+### How long does `REDDIT_COOKIES` stay valid?
+
+Reddit does not publish exact lifetimes, and they have changed over time, but in practice:
+
+- **Without auto-refresh**, the captured `reddit_session` is good for roughly a few weeks of inactivity. Each successful run on the daily cron *does* extend the session on Reddit's side, but the value in the `REDDIT_COOKIES` secret stays frozen — once Reddit rotates the cookie, your stored copy stops working and you have to repeat the capture step. Plan to re-capture cookies every ~30 days.
+- **With auto-refresh enabled**, the workflow writes the rolled cookies back to the `REDDIT_COOKIES` secret after each run, so as long as the cron runs at least every couple of weeks the secret stays fresh indefinitely. This is the closest thing to "set it once and leave it for a year".
+
+### Auto-refreshing the cookie secret
+
+To get the set-and-forget behaviour:
+
+1. Create a [fine-grained Personal Access Token](https://github.com/settings/personal-access-tokens) scoped to **only this repository** with the **`Secrets — Read and write`** repository permission.
+2. Save the token as a new repository secret named `REDDIT_COOKIES_REFRESH_TOKEN`.
+3. Done. After each scheduled or manual run, the workflow's `Refresh REDDIT_COOKIES secret` step uses that PAT with `gh secret set` to overwrite `REDDIT_COOKIES` with the live cookies the browser ended the run with.
+
+If `REDDIT_COOKIES_REFRESH_TOKEN` is not configured, the refresh step is skipped (the workflow logs a notice telling you so) and you fall back to the manual re-capture cadence described above.
+
+> The refreshed `cookies.json` file is written only inside the runner's filesystem and is deleted by the final cleanup step. It is not uploaded as a workflow artifact, so cookies are never published to anyone with read access to the repo.
 
 ## Running locally
 

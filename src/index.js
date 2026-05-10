@@ -1,7 +1,9 @@
+import { writeFile } from 'node:fs/promises';
 import { launchBrowser } from 'browser-commander';
 import { runStreak } from './upvoter.js';
 
 const SUBREDDITS = ['VintageStory', 'DispatchAdHoc'];
+const DEFAULT_COOKIE_OUTPUT_PATH = 'cookies.json';
 
 function parseBool(value) {
   if (typeof value !== 'string') return false;
@@ -80,10 +82,33 @@ function normalizeSameSite(value) {
   return 'Lax';
 }
 
+function serializeCookies(cookies) {
+  return JSON.stringify(
+    cookies.map((cookie) => {
+      const out = {
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path,
+        secure: Boolean(cookie.secure),
+        httpOnly: Boolean(cookie.httpOnly),
+        sameSite: normalizeSameSite(cookie.sameSite),
+      };
+      if (typeof cookie.expires === 'number' && cookie.expires > 0) {
+        out.expires = cookie.expires;
+      }
+      return out;
+    }),
+    null,
+    2
+  );
+}
+
 async function main() {
   const dryRun = parseBool(process.env.DRY_RUN);
   const subreddits = parseSubreddits(process.env.SUBREDDITS, SUBREDDITS);
   const cookies = parseCookies(process.env.REDDIT_COOKIES);
+  const cookieOutputPath = process.env.COOKIE_OUTPUT_PATH || DEFAULT_COOKIE_OUTPUT_PATH;
 
   console.log(
     `Running on subreddits: ${subreddits.join(', ')}${dryRun ? ' (dry run)' : ''}`
@@ -107,6 +132,20 @@ async function main() {
 
     const { results, errors } = await runStreak({ page, subreddits, dryRun });
     console.log('Summary:', JSON.stringify(results, null, 2));
+
+    try {
+      const refreshed = await browser.cookies();
+      const redditCookies = refreshed.filter((cookie) =>
+        (cookie.domain || '').includes('reddit.com')
+      );
+      await writeFile(cookieOutputPath, serializeCookies(redditCookies));
+      console.log(
+        `Saved ${redditCookies.length} refreshed Reddit cookies to ${cookieOutputPath}`
+      );
+    } catch (error) {
+      console.warn(`Could not save refreshed cookies: ${error.message}`);
+    }
+
     if (errors.length > 0) {
       process.exitCode = 1;
     }
@@ -126,9 +165,11 @@ if (isDirectInvocation) {
 export {
   main,
   SUBREDDITS,
+  DEFAULT_COOKIE_OUTPUT_PATH,
   parseBool,
   parseSubreddits,
   parseCookies,
   normalizeCookie,
   normalizeSameSite,
+  serializeCookies,
 };
