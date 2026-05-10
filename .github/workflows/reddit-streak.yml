@@ -52,7 +52,7 @@ jobs:
         run: |
           gh secret set REDDIT_COOKIES \
             --repo "$GITHUB_REPOSITORY" \
-            --body "$(cat cookies.json)"
+            < cookies.json
           echo "REDDIT_COOKIES secret refreshed from this run."
 
       - name: Note when cookie refresh is skipped
