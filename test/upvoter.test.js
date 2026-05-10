@@ -1,206 +1,292 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { upvoteLatestInSubreddit, runStreak } = require('../src/upvoter');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  buildSubredditUrl,
+  upvoteLatestInSubreddit,
+  runStreak,
+} from '../src/upvoter.js';
 
 function silentLogger() {
   return { log: () => {}, warn: () => {}, error: () => {} };
 }
 
-function makePost({ id, title = `post-${id}`, likes = null, upvoteImpl }) {
-  const post = {
-    id,
-    title,
-    likes,
-    upvoted: false,
-    upvote: async function () {
-      if (upvoteImpl) return upvoteImpl.call(this);
-      this.upvoted = true;
-      this.likes = true;
-      return this;
-    }
+function makeButton({ pressed = false, ariaLabel = 'upvote' } = {}) {
+  let clicks = 0;
+  let scrolls = 0;
+  let currentPressed = pressed;
+  const button = {
+    count: async () => 1,
+    click: async () => {
+      clicks += 1;
+      currentPressed = true;
+    },
+    scrollIntoViewIfNeeded: async () => {
+      scrolls += 1;
+    },
+    evaluate: async (fn) => {
+      const fakeEl = {
+        getAttribute: (name) => {
+          if (name === 'aria-pressed') return currentPressed ? 'true' : 'false';
+          if (name === 'aria-label') return ariaLabel;
+          return null;
+        },
+      };
+      return fn(fakeEl);
+    },
+    inspect: () => ({ clicks, scrolls, pressed: currentPressed }),
   };
-  return post;
+  return button;
 }
 
-function makeClient(map) {
+function makeMissingButton() {
   return {
-    getSubreddit(name) {
-      const posts = map[name] || [];
-      return {
-        getNew: async ({ limit }) => posts.slice(0, limit)
-      };
-    }
+    count: async () => 0,
+    click: async () => {
+      throw new Error('should not click missing button');
+    },
   };
 }
+
+function makePost({ id = 'post-1', title = 'Hello', button }) {
+  return {
+    locator: () => ({
+      first: () => button,
+    }),
+    evaluate: async (fn) => {
+      const fakeEl = {
+        getAttribute: (name) => {
+          if (name === 'id') return id;
+          return null;
+        },
+        querySelector: (selector) => {
+          if (selector === '[slot="title"]') {
+            return { textContent: title };
+          }
+          return null;
+        },
+      };
+      return fn(fakeEl);
+    },
+  };
+}
+
+function withFakeDocument(fakeDocument, fn) {
+  const previous = globalThis.document;
+  globalThis.document = fakeDocument;
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) {
+      delete globalThis.document;
+    } else {
+      globalThis.document = previous;
+    }
+  }
+}
+
+function makePage({ post, loggedIn = true, gotoUrls = [] } = {}) {
+  return {
+    goto: async (url) => {
+      gotoUrls.push(url);
+    },
+    waitForSelector: async () => {
+      if (!post) {
+        throw new Error('no posts found');
+      }
+      return null;
+    },
+    locator: () => ({
+      first: () => post,
+    }),
+    evaluate: async (fn) => {
+      const fakeDocument = {
+        cookie: loggedIn ? 'reddit_session=abc' : '',
+        querySelector: () => null,
+      };
+      return withFakeDocument(fakeDocument, () => fn());
+    },
+    gotoUrls,
+  };
+}
+
+test('buildSubredditUrl normalizes input forms', () => {
+  assert.equal(buildSubredditUrl('VintageStory'), 'https://www.reddit.com/r/VintageStory/new/');
+  assert.equal(buildSubredditUrl('r/VintageStory'), 'https://www.reddit.com/r/VintageStory/new/');
+  assert.equal(buildSubredditUrl('/r/VintageStory'), 'https://www.reddit.com/r/VintageStory/new/');
+  assert.equal(buildSubredditUrl('VintageStory/'), 'https://www.reddit.com/r/VintageStory/new/');
+});
 
 test('upvotes the latest post when not yet upvoted', async () => {
-  const posts = [makePost({ id: 'a' }), makePost({ id: 'b' })];
-  const client = makeClient({ test: posts });
-  const result = await upvoteLatestInSubreddit({ client, subreddit: 'test', logger: silentLogger() });
+  const button = makeButton({ pressed: false });
+  const post = makePost({ id: 'a', title: 'first', button });
+  const gotoUrls = [];
+  const page = makePage({ post, gotoUrls });
+
+  const result = await upvoteLatestInSubreddit({
+    page,
+    subreddit: 'VintageStory',
+    logger: silentLogger(),
+  });
+
   assert.equal(result.status, 'upvoted');
   assert.equal(result.postId, 'a');
-  assert.equal(posts[0].upvoted, true);
-  assert.equal(posts[1].upvoted, false);
+  assert.equal(result.title, 'first');
+  assert.equal(button.inspect().clicks, 1);
+  assert.deepEqual(gotoUrls, ['https://www.reddit.com/r/VintageStory/new/']);
 });
 
-test('skips already upvoted latest post and upvotes next available', async () => {
-  const posts = [
-    makePost({ id: 'a', likes: true }),
-    makePost({ id: 'b', likes: null }),
-    makePost({ id: 'c', likes: null })
-  ];
-  const client = makeClient({ test: posts });
-  const result = await upvoteLatestInSubreddit({ client, subreddit: 'test', logger: silentLogger() });
-  assert.equal(result.status, 'upvoted');
+test('reports already-upvoted when the latest post is already pressed', async () => {
+  const button = makeButton({ pressed: true });
+  const post = makePost({ id: 'b', button });
+  const page = makePage({ post });
+
+  const result = await upvoteLatestInSubreddit({
+    page,
+    subreddit: 'VintageStory',
+    logger: silentLogger(),
+  });
+
+  assert.equal(result.status, 'already-upvoted');
   assert.equal(result.postId, 'b');
-  assert.equal(posts[0].upvoted, false);
-  assert.equal(posts[1].upvoted, true);
+  assert.equal(button.inspect().clicks, 0);
 });
 
-test('returns all-upvoted when every fetched post is liked', async () => {
-  const posts = Array.from({ length: 10 }, (_, i) => makePost({ id: `p${i}`, likes: true }));
-  const client = makeClient({ test: posts });
-  const result = await upvoteLatestInSubreddit({ client, subreddit: 'test', logger: silentLogger() });
-  assert.equal(result.status, 'all-upvoted');
-  assert.equal(result.checked, 10);
-});
-
-test('returns empty when subreddit has no posts', async () => {
-  const client = makeClient({ test: [] });
-  const result = await upvoteLatestInSubreddit({ client, subreddit: 'test', logger: silentLogger() });
+test('returns empty when no posts are found', async () => {
+  const page = makePage({ post: null });
+  const result = await upvoteLatestInSubreddit({
+    page,
+    subreddit: 'VintageStory',
+    logger: silentLogger(),
+  });
   assert.equal(result.status, 'empty');
 });
 
-test('respects lookahead limit', async () => {
-  const posts = Array.from({ length: 20 }, (_, i) => makePost({ id: `p${i}` }));
-  let requestedLimit = null;
-  const client = {
-    getSubreddit() {
-      return {
-        getNew: async ({ limit }) => {
-          requestedLimit = limit;
-          return posts.slice(0, limit);
-        }
-      };
-    }
-  };
-  await upvoteLatestInSubreddit({ client, subreddit: 'test', logger: silentLogger(), lookahead: 5 });
-  assert.equal(requestedLimit, 5);
+test('throws when not logged in', async () => {
+  const button = makeButton();
+  const post = makePost({ id: 'c', button });
+  const page = makePage({ post, loggedIn: false });
+
+  await assert.rejects(
+    upvoteLatestInSubreddit({
+      page,
+      subreddit: 'VintageStory',
+      logger: silentLogger(),
+    }),
+    /Not logged in/
+  );
 });
 
-test('propagates errors thrown by upvote', async () => {
-  const post = makePost({
-    id: 'a',
-    upvoteImpl: async function () {
-      throw new Error('429 Too Many Requests');
-    }
+test('dryRun reports the post that would be upvoted without clicking', async () => {
+  const button = makeButton({ pressed: false });
+  const post = makePost({ id: 'd', title: 'dry', button });
+  const page = makePage({ post });
+
+  const result = await upvoteLatestInSubreddit({
+    page,
+    subreddit: 'VintageStory',
+    logger: silentLogger(),
+    dryRun: true,
   });
-  const client = makeClient({ test: [post] });
+
+  assert.equal(result.status, 'dry-run');
+  assert.equal(result.postId, 'd');
+  assert.equal(button.inspect().clicks, 0);
+});
+
+test('dryRun still reports already-upvoted posts as already-upvoted', async () => {
+  const button = makeButton({ pressed: true });
+  const post = makePost({ id: 'e', button });
+  const page = makePage({ post });
+
+  const result = await upvoteLatestInSubreddit({
+    page,
+    subreddit: 'VintageStory',
+    logger: silentLogger(),
+    dryRun: true,
+  });
+
+  assert.equal(result.status, 'already-upvoted');
+  assert.equal(button.inspect().clicks, 0);
+});
+
+test('throws when upvote button cannot be found on a real post', async () => {
+  const post = makePost({ id: 'f', button: makeMissingButton() });
+  const page = makePage({ post });
+
   await assert.rejects(
-    upvoteLatestInSubreddit({ client, subreddit: 'test', logger: silentLogger() }),
-    /429/
+    upvoteLatestInSubreddit({
+      page,
+      subreddit: 'VintageStory',
+      logger: silentLogger(),
+    }),
+    /upvote button not found/
   );
 });
 
 test('runStreak processes multiple subreddits and collects errors', async () => {
-  const okPost = makePost({ id: 'ok' });
-  const failPost = makePost({
-    id: 'fail',
-    upvoteImpl: async () => {
-      throw new Error('boom');
-    }
-  });
-  const client = makeClient({ good: [okPost], bad: [failPost] });
+  const goodButton = makeButton({ pressed: false });
+  const goodPost = makePost({ id: 'good', button: goodButton });
+
+  const subredditPages = {
+    Good: makePage({ post: goodPost }),
+    Bad: makePage({ post: null, loggedIn: false }),
+  };
+  const visits = [];
+  const page = {
+    goto: async (url) => {
+      visits.push(url);
+      const which = url.includes('/r/Good/') ? 'Good' : 'Bad';
+      page._current = subredditPages[which];
+    },
+    waitForSelector: async (...args) => page._current.waitForSelector(...args),
+    locator: () => page._current.locator(),
+    evaluate: async (fn) => page._current.evaluate(fn),
+  };
+
   const { results, errors } = await runStreak({
-    client,
-    subreddits: ['good', 'bad'],
-    logger: silentLogger()
+    page,
+    subreddits: ['Good', 'Bad'],
+    logger: silentLogger(),
   });
+
   assert.equal(results.length, 2);
   assert.equal(results[0].status, 'upvoted');
   assert.equal(results[1].status, 'error');
   assert.equal(errors.length, 1);
-});
-
-test('runStreak continues to next subreddit after one fails', async () => {
-  const failPost = makePost({
-    id: 'x',
-    upvoteImpl: async () => {
-      throw new Error('reddit api error');
-    }
-  });
-  const okPost = makePost({ id: 'y' });
-  const client = makeClient({ first: [failPost], second: [okPost] });
-  const { results } = await runStreak({
-    client,
-    subreddits: ['first', 'second'],
-    logger: silentLogger()
-  });
-  assert.equal(results[1].status, 'upvoted');
-  assert.equal(okPost.upvoted, true);
-});
-
-test('dryRun reports the post that would be upvoted without calling upvote', async () => {
-  let upvoteCalls = 0;
-  const post = makePost({
-    id: 'a',
-    upvoteImpl: async function () {
-      upvoteCalls += 1;
-      this.upvoted = true;
-    }
-  });
-  const client = makeClient({ test: [post] });
-  const result = await upvoteLatestInSubreddit({
-    client,
-    subreddit: 'test',
-    logger: silentLogger(),
-    dryRun: true
-  });
-  assert.equal(result.status, 'dry-run');
-  assert.equal(result.postId, 'a');
-  assert.equal(post.upvoted, false);
-  assert.equal(upvoteCalls, 0);
-});
-
-test('dryRun still skips already-upvoted posts before reporting the next candidate', async () => {
-  let upvoteCalls = 0;
-  const trackedUpvote = async function () {
-    upvoteCalls += 1;
-  };
-  const posts = [
-    makePost({ id: 'a', likes: true, upvoteImpl: trackedUpvote }),
-    makePost({ id: 'b', likes: null, upvoteImpl: trackedUpvote })
-  ];
-  const client = makeClient({ test: posts });
-  const result = await upvoteLatestInSubreddit({
-    client,
-    subreddit: 'test',
-    logger: silentLogger(),
-    dryRun: true
-  });
-  assert.equal(result.status, 'dry-run');
-  assert.equal(result.postId, 'b');
-  assert.equal(upvoteCalls, 0);
+  assert.equal(visits.length, 2);
 });
 
 test('runStreak forwards dryRun to per-subreddit upvotes', async () => {
-  let upvoteCalls = 0;
-  const trackedUpvote = async function () {
-    upvoteCalls += 1;
+  const buttonA = makeButton({ pressed: false });
+  const buttonB = makeButton({ pressed: false });
+  const postA = makePost({ id: '1', button: buttonA });
+  const postB = makePost({ id: '2', button: buttonB });
+
+  const subredditPages = {
+    A: makePage({ post: postA }),
+    B: makePage({ post: postB }),
   };
-  const client = makeClient({
-    a: [makePost({ id: '1', upvoteImpl: trackedUpvote })],
-    b: [makePost({ id: '2', upvoteImpl: trackedUpvote })]
-  });
+  const page = {
+    goto: async (url) => {
+      const which = url.includes('/r/A/') ? 'A' : 'B';
+      page._current = subredditPages[which];
+    },
+    waitForSelector: async (...args) => page._current.waitForSelector(...args),
+    locator: () => page._current.locator(),
+    evaluate: async (fn) => page._current.evaluate(fn),
+  };
+
   const { results, errors } = await runStreak({
-    client,
-    subreddits: ['a', 'b'],
+    page,
+    subreddits: ['A', 'B'],
     logger: silentLogger(),
-    dryRun: true
+    dryRun: true,
   });
+
   assert.equal(errors.length, 0);
   assert.equal(results.length, 2);
   assert.equal(results[0].status, 'dry-run');
   assert.equal(results[1].status, 'dry-run');
-  assert.equal(upvoteCalls, 0);
+  assert.equal(buttonA.inspect().clicks, 0);
+  assert.equal(buttonB.inspect().clicks, 0);
 });

@@ -19,6 +19,8 @@ jobs:
   upvote:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      REFRESH_TOKEN: ${{ secrets.REDDIT_COOKIES_REFRESH_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -32,13 +34,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Run Reddit streak
         env:
-          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
-          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
-          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
-          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
-          REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+          REDDIT_COOKIES: ${{ secrets.REDDIT_COOKIES }}
           DRY_RUN: ${{ inputs.dry_run }}
           SUBREDDITS: ${{ inputs.subreddits }}
+          COOKIE_OUTPUT_PATH: cookies.json
         run: npm start
+
+      - name: Refresh REDDIT_COOKIES secret
+        if: ${{ always() && hashFiles('cookies.json') != '' && env.REFRESH_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ env.REFRESH_TOKEN }}
+        run: |
+          gh secret set REDDIT_COOKIES \
+            --repo "$GITHUB_REPOSITORY" \
+            < cookies.json
+          echo "REDDIT_COOKIES secret refreshed from this run."
+
+      - name: Note when cookie refresh is skipped
+        if: ${{ always() && hashFiles('cookies.json') != '' && env.REFRESH_TOKEN == '' }}
+        run: |
+          echo "::notice::Skipped REDDIT_COOKIES auto-refresh: REDDIT_COOKIES_REFRESH_TOKEN is not configured."
+          echo "::notice::See README → 'Auto-refreshing the cookie secret' to enable set-and-forget mode."
+
+      - name: Cleanup cookies file
+        if: ${{ always() }}
+        run: rm -f cookies.json

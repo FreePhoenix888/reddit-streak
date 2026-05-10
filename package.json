@@ -1,8 +1,9 @@
 {
   "name": "reddit-streak",
-  "version": "1.0.0",
-  "description": "Daily Reddit upvote streak via GitHub Actions",
+  "version": "2.0.0",
+  "description": "Daily Reddit upvote streak via GitHub Actions and a real browser (no Reddit API)",
   "main": "src/index.js",
+  "type": "module",
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test test/*.test.js"
@@ -10,7 +11,8 @@
   "keywords": [
     "reddit",
     "streak",
-    "snoowrap",
+    "playwright",
+    "browser-commander",
     "github-actions"
   ],
   "author": "",
@@ -19,6 +21,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "snoowrap": "^1.23.0"
+    "browser-commander": "^0.8.1",
+    "playwright": "^1.56.1"
   }
 }
