@@ -1,3 +1,4 @@
+# Force GitHub to re-evaluate the schedule
 name: Reddit Streak
 
 on:
